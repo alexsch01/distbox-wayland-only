@@ -113,6 +113,7 @@ elif [ "$1" = "run" ]; then
         --env TZ=$(timedatectl show --va -p Timezone) \
         --env DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus \
         --env HOSTNAME=$DISTBOX_CONTAINER_ID \
+        --env WAYLAND_DISPLAY=$WAYLAND_DISPLAY \
     my-distbox \
         su $USER --pty -c "${*: 2}"
 elif [ "$1" = "enter" ]; then
