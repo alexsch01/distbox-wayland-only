@@ -1,0 +1,191 @@
+#!/bin/sh
+
+DISTBOX_IMAGE=registry.fedoraproject.org/fedora-toolbox:latest
+
+DISTBOX_HOME=$HOME/distbox-home
+DISTBOX_CONTAINER_ID=my-distbox
+
+if [ "$DISTBOX_CUSTOM" != "" ]; then
+    if grep '^[-_0-9a-zA-Z]*$' <<< $DISTBOX_CUSTOM 1> /dev/null; then
+        DISTBOX_HOME=$HOME/distbox-custom/$DISTBOX_CUSTOM
+        DISTBOX_CONTAINER_ID=custom---$DISTBOX_CUSTOM
+    else
+        echo "DISTBOX_CUSTOM is invalid"
+        exit 1
+    fi
+fi
+
+dbus_setup() {
+    HOME=$DISTBOX_HOME podman exec my-distbox rm -f /run/dbus/pid
+    HOME=$DISTBOX_HOME podman exec my-distbox dbus-daemon --system
+    HOME=$DISTBOX_HOME podman exec --user=$USER my-distbox dbus-daemon --session --address=unix:path=$XDG_RUNTIME_DIR/bus 2> /dev/null &
+}
+
+if [ "$1" = "install" ]; then
+    read -r -p "Do you want to install/replace [$DISTBOX_CONTAINER_ID]? [y/N] " response
+    if ! [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+        exit
+    fi
+
+    echo y | distbox uninstall
+
+    mkdir -p $DISTBOX_HOME/.config/containers
+
+    echo '[storage]
+driver = "overlay"
+runroot = "$HOME/.config/containers/storage"' > $DISTBOX_HOME/.config/containers/storage.conf
+
+    cp $XAUTHORITY $XDG_RUNTIME_DIR/distbox-X11 2> /dev/null
+    touch -a $XDG_RUNTIME_DIR/wayland-0
+
+    HOME=$DISTBOX_HOME podman create \
+        --hostname $HOSTNAME \
+        --name my-distbox \
+        --privileged \
+        --security-opt label=disable \
+        --security-opt apparmor=unconfined \
+        --pids-limit=-1 \
+        --user root:root \
+        --shm-size $(df -h /dev/shm | awk '{ print $2 }' | sed -n 2p) \
+        --network host \
+        --label manager=distrobox \
+        --label distrobox.unshare_groups=1 \
+        --env SHELL=bash \
+        --env HOME=/home/$USER \
+        --env container=podman \
+        --env TERMINFO_DIRS=/usr/share/terminfo \
+        --env CONTAINER_ID=$DISTBOX_CONTAINER_ID \
+        --volume $HOME/.distbox-helpers/distrobox-init:/usr/bin/entrypoint:ro \
+        --volume $DISTBOX_HOME:/home/$USER \
+        --volume /dev:/dev:ro \
+        --volume /sys:/sys:ro \
+        --volume /dev/pts \
+        --volume /dev/null:/dev/ptmx \
+        --volume /var/log/journal \
+        --volume $XDG_RUNTIME_DIR/wayland-0:$XDG_RUNTIME_DIR/wayland-0:ro \
+        --volume $XDG_RUNTIME_DIR/pipewire-0:$XDG_RUNTIME_DIR/pipewire-0:ro \
+        --volume $XDG_RUNTIME_DIR/distbox-X11:$XDG_RUNTIME_DIR/distbox-X11:ro \
+        --volume /etc/hosts:/etc/hosts:ro \
+        --volume /etc/resolv.conf:/etc/resolv.conf:ro \
+        --volume /etc/hostname:/etc/hostname:ro \
+        --annotation run.oci.keep_original_groups=1 \
+        --ulimit host \
+        --userns keep-id \
+        --entrypoint /usr/bin/entrypoint $DISTBOX_IMAGE \
+            --verbose \
+            --name $USER \
+            --user $(id -u) \
+            --group $(id -g) \
+            --home /home/$USER \
+            --init 0 \
+            --nvidia 0 \
+            --pre-init-hooks '' \
+            --additional-packages 'google-noto-color-emoji-fonts google-noto-sans-mono-fonts google-noto-sans-symbols2-fonts dbus-daemon libglvnd-gles gsettings-desktop-schemas dconf' -- '' || exit
+    HOME=$DISTBOX_HOME podman untag $DISTBOX_IMAGE
+
+    HOME=$DISTBOX_HOME $HOME/.distbox-helpers/distrobox-enter my-distbox --no-workdir -- ''
+    HOME=$DISTBOX_HOME podman exec my-distbox chown $USER: $XDG_RUNTIME_DIR
+
+    HOME=$DISTBOX_HOME podman exec my-distbox mkdir /run/dbus
+    dbus_setup
+    HOME=$DISTBOX_HOME podman exec my-distbox rm -f /etc/machine-id
+    HOME=$DISTBOX_HOME podman exec my-distbox dbus-uuidgen --ensure=/etc/machine-id
+
+    HOME=$DISTBOX_HOME podman exec --user=$USER my-distbox cp /etc/skel/.bashrc $HOME
+
+    distbox run gsettings set org.gnome.desktop.wm.preferences button-layout ":minimize,maximize,close"
+    HOME=$DISTBOX_HOME podman exec my-distbox pkill dconf-service
+elif [ "$1" = "run" ]; then
+    cmp --silent $XAUTHORITY $XDG_RUNTIME_DIR/distbox-X11 || {
+        echo y | distbox stop 1> /dev/null;
+        cp $XAUTHORITY $XDG_RUNTIME_DIR/distbox-X11;
+        touch -a $XDG_RUNTIME_DIR/wayland-0;
+    }
+
+    ERROR_NEED_DBUS_SETUP=$(HOME=$DISTBOX_HOME podman exec my-distbox echo 2>&1)
+    HOME=$DISTBOX_HOME podman start my-distbox > /dev/null
+    if [ "$ERROR_NEED_DBUS_SETUP" == "Error: can only create exec sessions on running containers: container state improper" ]; then
+        dbus_setup
+    fi
+
+    HOME=$DISTBOX_HOME podman exec \
+        --interactive \
+        --detach-keys= \
+        --user=root \
+        --tty \
+        --workdir=/home/$USER \
+        --env HISTCONTROL=ignoredups \
+        --env HISTSIZE=1000 \
+        --env XDG_SESSION_TYPE=$XDG_SESSION_TYPE \
+        --env LANG=$LANG \
+        --env DISPLAY=:0 \
+        --env XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR \
+        --env TZ=$(timedatectl show --va -p Timezone) \
+        --env DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus \
+        --env HOSTNAME=$DISTBOX_CONTAINER_ID \
+    my-distbox \
+        su $USER --pty -c "XAUTHORITY=$XDG_RUNTIME_DIR/distbox-X11 ${*: 2}"
+elif [ "$1" = "enter" ]; then
+    distbox run bash
+elif [ "$1" = "backup" ]; then
+    read -r -p "Do you want to (override) backup [$DISTBOX_CONTAINER_ID]? [y/N] " response
+    if ! [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+        exit
+    fi
+
+    echo y | distbox stop 1> /dev/null
+    podman unshare rm -rf $DISTBOX_HOME@backup
+    podman unshare cp -R -a $DISTBOX_HOME $DISTBOX_HOME@backup
+elif [ "$1" = "upgrade" ]; then
+    read -r -p "Do you want to upgrade [$DISTBOX_CONTAINER_ID]? [y/N] " response
+    if ! [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+        exit
+    fi
+
+    distbox run || exit
+    HOME=$DISTBOX_HOME podman exec my-distbox dnf upgrade --refresh -y
+
+    echo y | distbox stop 1> /dev/null
+    distbox run
+
+    NEXT_FEDORA=$(HOME=$DISTBOX_HOME podman exec my-distbox cat /etc/os-release | grep VERSION_ID)
+    NEXT_FEDORA=$((${NEXT_FEDORA//VERSION_ID=/} + 1))
+
+    curl "https://dl.fedoraproject.org/pub/fedora/imagelist-fedora" 2> /dev/null | grep "releases/$NEXT_FEDORA" 1> /dev/null || {
+        exit 0;
+    }
+
+    HOME=$DISTBOX_HOME podman exec my-distbox dnf system-upgrade download --releasever=$NEXT_FEDORA -y
+    HOME=$DISTBOX_HOME podman exec my-distbox dnf system-upgrade reboot 2> /dev/null
+    HOME=$DISTBOX_HOME podman exec my-distbox dnf system-upgrade upgrade
+
+    echo y | distbox stop 1> /dev/null
+    distbox run
+elif [ "$1" = "stop" ]; then
+    read -r -p "Do you want to stop [$DISTBOX_CONTAINER_ID]? [y/N] " response
+    if ! [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+        exit
+    fi
+
+    HOME=$DISTBOX_HOME podman stop my-distbox
+elif [ "$1" = "uninstall" ]; then
+    read -r -p "Do you want to uninstall [$DISTBOX_CONTAINER_ID]? [y/N] " response
+    if ! [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+        exit
+    fi
+
+    echo y | distbox stop 1> /dev/null 2> /dev/null
+
+    podman unshare chown root: -R $DISTBOX_HOME/.local/share/containers/storage 2> /dev/null
+    podman unshare rm -rf $DISTBOX_HOME 2> /dev/null
+    rm -rf $DISTBOX_HOME
+else
+    echo $'Valid commands: \n'
+    echo 'distbox install'
+    echo 'distbox run COMMAND'
+    echo 'distbox enter'
+    echo 'distbox backup'
+    echo 'distbox upgrade'
+    echo 'distbox stop'
+    echo 'distbox uninstall'
+fi
