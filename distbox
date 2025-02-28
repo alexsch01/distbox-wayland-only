@@ -35,9 +35,6 @@ if [ "$1" = "install" ]; then
 driver = "overlay"
 runroot = "$HOME/.config/containers/storage"' > $DISTBOX_HOME/.config/containers/storage.conf
 
-    cp $XAUTHORITY $XDG_RUNTIME_DIR/distbox-X11 2> /dev/null
-    touch -a $XDG_RUNTIME_DIR/wayland-0
-
     HOME=$DISTBOX_HOME podman create \
         --hostname $HOSTNAME \
         --name my-distbox \
@@ -64,7 +61,6 @@ runroot = "$HOME/.config/containers/storage"' > $DISTBOX_HOME/.config/containers
         --volume /var/log/journal \
         --volume $XDG_RUNTIME_DIR/wayland-0:$XDG_RUNTIME_DIR/wayland-0:ro \
         --volume $XDG_RUNTIME_DIR/pipewire-0:$XDG_RUNTIME_DIR/pipewire-0:ro \
-        --volume $XDG_RUNTIME_DIR/distbox-X11:$XDG_RUNTIME_DIR/distbox-X11:ro \
         --volume /etc/hosts:/etc/hosts:ro \
         --volume /etc/resolv.conf:/etc/resolv.conf:ro \
         --volume /etc/hostname:/etc/hostname:ro \
@@ -96,12 +92,6 @@ runroot = "$HOME/.config/containers/storage"' > $DISTBOX_HOME/.config/containers
     distbox run gsettings set org.gnome.desktop.wm.preferences button-layout ":minimize,maximize,close"
     HOME=$DISTBOX_HOME podman exec my-distbox pkill dconf-service
 elif [ "$1" = "run" ]; then
-    cmp --silent $XAUTHORITY $XDG_RUNTIME_DIR/distbox-X11 || {
-        echo y | distbox stop 1> /dev/null;
-        cp $XAUTHORITY $XDG_RUNTIME_DIR/distbox-X11;
-        touch -a $XDG_RUNTIME_DIR/wayland-0;
-    }
-
     ERROR_NEED_DBUS_SETUP=$(HOME=$DISTBOX_HOME podman exec my-distbox echo 2>&1)
     HOME=$DISTBOX_HOME podman start my-distbox > /dev/null
     if [ "$ERROR_NEED_DBUS_SETUP" == "Error: can only create exec sessions on running containers: container state improper" ]; then
@@ -124,7 +114,7 @@ elif [ "$1" = "run" ]; then
         --env DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus \
         --env HOSTNAME=$DISTBOX_CONTAINER_ID \
     my-distbox \
-        su $USER --pty -c "XAUTHORITY=$XDG_RUNTIME_DIR/distbox-X11 ${*: 2}"
+        su $USER --pty -c "${*: 2}"
 elif [ "$1" = "enter" ]; then
     distbox run bash
 elif [ "$1" = "backup" ]; then
