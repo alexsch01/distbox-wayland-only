@@ -35,11 +35,6 @@ if [ "$1" = "install" ]; then
 driver = "overlay"
 runroot = "$HOME/.config/containers/storage"' > $DISTBOX_HOME/.config/containers/storage.conf
 
-    DISTBOX_WAYLAND_VOLUME=""
-    if [ "$WAYLAND_DISPLAY" != "" ]; then
-        DISTBOX_WAYLAND_VOLUME="--volume $XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:ro"
-    fi
-
     HOME=$DISTBOX_HOME podman create \
         --hostname $HOSTNAME \
         --name my-distbox \
@@ -64,7 +59,7 @@ runroot = "$HOME/.config/containers/storage"' > $DISTBOX_HOME/.config/containers
         --volume /dev/pts \
         --volume /dev/null:/dev/ptmx \
         --volume /var/log/journal \
-        $DISTBOX_WAYLAND_VOLUME \
+        --volume $XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:ro \
         --volume $XDG_RUNTIME_DIR/pipewire-0:$XDG_RUNTIME_DIR/pipewire-0:ro \
         --volume /etc/hosts:/etc/hosts:ro \
         --volume /etc/resolv.conf:/etc/resolv.conf:ro \
@@ -103,11 +98,6 @@ elif [ "$1" = "run" ]; then
         dbus_setup
     fi
 
-    DISTBOX_WAYLAND_DISPLAY_ENV=""
-    if [ "$WAYLAND_DISPLAY" != "" ]; then
-        DISTBOX_WAYLAND_DISPLAY_ENV="--env WAYLAND_DISPLAY=$WAYLAND_DISPLAY"
-    fi
-
     HOME=$DISTBOX_HOME podman exec \
         --interactive \
         --detach-keys= \
@@ -123,7 +113,7 @@ elif [ "$1" = "run" ]; then
         --env TZ=$(timedatectl show --va -p Timezone) \
         --env DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus \
         --env HOSTNAME=$DISTBOX_CONTAINER_ID \
-        $DISTBOX_WAYLAND_DISPLAY_ENV \
+        --env WAYLAND_DISPLAY=$WAYLAND_DISPLAY \
     my-distbox \
         su $USER --pty -c "${*: 2}"
 elif [ "$1" = "enter" ]; then
