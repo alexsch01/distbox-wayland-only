@@ -79,6 +79,7 @@ runroot = "$HOME/.config/containers/storage"' > $DISTBOX_HOME/.config/containers
 
     distbox run gsettings set org.gnome.desktop.wm.preferences button-layout ":minimize,maximize,close"
     HOME=$DISTBOX_HOME podman exec my-distbox pkill dconf-service
+    distbox run 'echo "exclude=*.i686" | sudo tee -a /etc/dnf/dnf.conf' > /dev/null
 elif [ "$1" = "run" ]; then
     DISTBOX_OFFLINE=$(HOME=$DISTBOX_HOME podman exec my-distbox echo 2>&1)
     HOME=$DISTBOX_HOME podman start my-distbox > /dev/null
